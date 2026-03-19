@@ -23,7 +23,9 @@ from OEA.agent.tools.embodied import EmbodiedActionTool
 from OEA.agent.tools.filesystem import EditFileTool, ListDirTool, ReadFileTool, WriteFileTool
 from OEA.agent.tools.message import MessageTool
 from OEA.agent.tools.registry import ToolRegistry
+from OEA.agent.tools.scene_graph import SceneGraphQueryTool
 from OEA.agent.tools.shell import ExecTool
+from OEA.agent.tools.semantic_navigation import SemanticNavigationTool
 from OEA.agent.tools.spawn import SpawnTool
 from OEA.agent.tools.web import WebFetchTool, WebSearchTool
 from OEA.bus.events import InboundMessage, OutboundMessage
@@ -152,6 +154,12 @@ class AgentLoop:
             workspace=self.workspace,
             provider=self.provider,
             model=self.model,
+        ))
+        self.tools.register(action_tool)
+        self.tools.register(SceneGraphQueryTool(workspace=self.workspace))
+        self.tools.register(SemanticNavigationTool(
+            workspace=self.workspace,
+            action_tool=action_tool,
         ))
 
     async def _connect_mcp(self) -> None:
