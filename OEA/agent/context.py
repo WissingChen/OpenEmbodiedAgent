@@ -22,7 +22,7 @@ class ContextBuilder:
     # Embodied extension files — loaded only when present in workspace.
     # New tracks can add files here without touching other code.
     EMBODIED_FILES = [
-        "EMBODIED.md", "ENVIRONMENT.md", "LESSONS.md",
+        "EMBODIED.md", "ENVIRONMENT.md", "LESSONS.md", "ROBOTS.md",
         "TASK.md", "ORCHESTRATOR.md",
         "MEMORY_SPATIAL.md", "TIMELINE.md",
     ]

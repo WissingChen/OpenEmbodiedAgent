@@ -1,46 +1,97 @@
-# Robot Embodiment Declaration
+# EMBODIED.md Template
 
-This file describes the physical capabilities and constraints of the connected robot.
-The Critic Agent reads this file to validate whether proposed actions are safe and feasible.
+This file describes one embodied robot instance.
+The Critic Agent reads the runtime `EMBODIED.md` to validate whether proposed actions are safe and feasible.
+
+Use this template to understand the structure and meaning of each section.
+Do not keep concrete robot-specific values here in production; put those in `hal/profiles/*.md` and let the watchdog copy the matching profile into the robot workspace.
 
 ## Identity
 
-- **Name**: OEA Desktop Pet
-- **Type**: Desktop-level virtual pet (simulation mode)
+Describe what this robot is.
+Typical fields:
+- **Name**: human-readable robot name
+- **Type**: robot category, e.g. quadruped, arm, desktop pet, mobile manipulator
+- **Driver/Profile**: optional implementation identifier
 
-## Degrees of Freedom
+## Degrees of Freedom or Sensors
+
+Use one or both of these sections depending on the robot type.
+
+### Degrees of Freedom
+
+List movable joints, ranges, and what they control.
 
 | Joint | Range | Description |
 |-------|-------|-------------|
-| Head Pan | -90° to +90° | Horizontal head rotation |
-| Head Tilt | -45° to +45° | Vertical head rotation |
+| example_joint | example range | what this joint does |
+
+### Sensors
+
+List the robot's sensing capabilities when perception matters.
+
+- **Camera**: optional
+- **LiDAR**: optional
+- **Odometry**: optional
+- **Microphone**: optional
 
 ## Supported Actions
 
+This is the most important section for the Critic.
+List the actions the robot can safely accept, their parameters, and what they do.
+
 | Action | Parameters | Description |
 |--------|-----------|-------------|
-| `nod_head` | — | Nod head up and down |
-| `shake_head` | — | Shake head left and right |
-| `point_to` | `target: string` | Point toward a named object in the scene |
-| `move_to` | `x, y, z: float` | Move to a 3D coordinate |
-| `pick_up` | `target: string` | Pick up a named object |
-| `put_down` | `target: string, location: string` | Put an object down at a location |
-| `push` | `target: string, direction: string` | Push an object in a direction |
+| `example_action` | `arg1, arg2` | Example action description |
 
 ## Physical Constraints
 
-- **Workspace bounds**: x ∈ [-50, 50], y ∈ [-50, 50], z ∈ [0, 30] (centimetres)
-- **Max payload**: 50 g
-- **Max reach**: 15 cm from base
-- **Collision policy**: Stop immediately on contact force > 2 N
+Describe hard limits and safety boundaries.
+Examples:
+- **Workspace bounds**
+- **Max payload**
+- **Max reach**
+- **Collision policy**
+- **Speed limits**
+
+## Connection
+
+Describe how the robot is reached by HAL.
+This section is static capability/configuration, not runtime status.
+Examples:
+- **Transport**
+- **Host**
+- **Port**
+- **User**
+- **Auth**
+- **Reconnect Policy**
+- **Health Check**
+
+Runtime connection state belongs in `ENVIRONMENT.md` under `robots.<robot_id>.connection_state`.
+
+## Runtime Protocol
+
+Optionally document how this robot maps into shared runtime state.
+Examples:
+- **Connection channel**: `robots.<robot_id>.connection_state`
+- **Pose channel**: `robots.<robot_id>.robot_pose`
+- **Navigation channel**: `robots.<robot_id>.nav_state`
+- **Health owner**: usually `hal_watchdog.py`
 
 ## Navigation & Multi-Agent Protocol
 
-- **Environment schema**: `ENVIRONMENT.md` should use `oea.environment.v1` when possible.
-- **Per-robot state isolation**: each robot writes only its own key in `robots.<robot_id>`.
-- **Pose channel**: `robots.<robot_id>.robot_pose` is reserved for localization state.
-- **Navigation channel**: `robots.<robot_id>.nav_state` is reserved for runtime nav/task state.
-- **Scene graph node fields**: semantic navigation expects `id`, `class`, `center`, `size`, and may use `frame`, `track_id`, `last_seen_at`.
-- **Safety distance**: approach distance to obstacles and target objects should be >= 0.5 m unless task requires closer contact.
-- **Relocalization support**: if enabled by the active driver, `nav_state` may expose relocalization status and confidence.
-- **ROS2 bridge support**: navigation-capable embodiments should declare whether they expose `/cmd_vel`, `/navigate_to_pose`, and `/initialpose`.
+Use this section when the robot participates in navigation or fleet coordination.
+Typical items:
+- **Environment schema**: usually `oea.environment.v1`
+- **Per-robot state isolation**
+- **Scene graph assumptions**
+- **Safety distance**
+- **Relocalization support**
+- **ROS2 bridge support**
+
+## Authoring Rules
+
+- Keep this file specific to one robot profile.
+- Put concrete robot values in `hal/profiles/*.md`, not in the template.
+- Keep runtime status out of this file; runtime status belongs in `ENVIRONMENT.md`.
+- In fleet mode, each robot workspace should have its own runtime `EMBODIED.md` copied from the matching profile.

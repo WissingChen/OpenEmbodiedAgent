@@ -251,6 +251,25 @@ class AgentDefaults(Base):
         return self.memory_window is not None and "context_window_tokens" not in self.model_fields_set
 
 
+class EmbodimentInstanceConfig(Base):
+    """One embodied robot instance in fleet mode."""
+
+    robot_id: str
+    driver: str
+    workspace: str
+    enabled: bool = True
+    profile_name: str | None = None
+    shared_environment: str | None = None
+
+
+class EmbodimentsConfig(Base):
+    """Embodiment topology and robot instance registry."""
+
+    mode: Literal["single", "fleet"] = "single"
+    shared_workspace: str = "~/.OEA/workspaces/shared"
+    instances: list[EmbodimentInstanceConfig] = Field(default_factory=list)
+
+
 class ModeConfig(Base):
     """Configuration for agent mode."""
 
@@ -372,10 +391,18 @@ class Config(BaseSettings):
     providers: ProvidersConfig = Field(default_factory=ProvidersConfig)
     gateway: GatewayConfig = Field(default_factory=GatewayConfig)
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
+    embodiments: EmbodimentsConfig = Field(default_factory=EmbodimentsConfig)
+
+    @property
+    def is_fleet_mode(self) -> bool:
+        """Return whether the config is using shared + robot workspaces."""
+        return self.embodiments.mode == "fleet"
 
     @property
     def workspace_path(self) -> Path:
-        """Get expanded workspace path."""
+        """Get expanded agent workspace path."""
+        if self.is_fleet_mode:
+            return Path(self.embodiments.shared_workspace).expanduser()
         return Path(self.agents.defaults.workspace).expanduser()
 
     def _match_provider(

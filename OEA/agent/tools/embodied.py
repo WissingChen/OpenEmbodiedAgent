@@ -9,6 +9,7 @@ from typing import Any
 from loguru import logger
 
 from OEA.agent.tools.base import Tool
+from OEA.embodiment_registry import EmbodimentRegistry
 from OEA.providers.base import LLMProvider
 
 _FENCE_OPEN = "```json"
@@ -16,14 +17,7 @@ _FENCE_CLOSE = "```"
 
 
 class EmbodiedActionTool(Tool):
-    """
-    Tool for executing robot actions.
-
-    This tool acts as the Critic in the Dual-Track Multi-Agent System.
-    It intercepts the action draft from the Planner, validates it against
-    the physical limits defined in EMBODIED.md, and only writes to ACTION.md
-    if the validation passes.
-    """
+    """Validate embodied actions and route them to the correct robot workspace."""
 
     @property
     def name(self) -> str:
@@ -46,12 +40,12 @@ class EmbodiedActionTool(Tool):
                     "description": (
                         "The type of action to execute "
                         "(e.g., 'point_to', 'move_to', 'pick_up', "
-                        "'semantic_navigate', 'localize')."
+                        "'semantic_navigate', 'localize', 'connect_robot')."
                     ),
                 },
                 "parameters": {
                     "type": "object",
-                    "description": "The parameters for the action.",
+                    "description": "The parameters for the action. Include robot_id in fleet mode.",
                 },
                 "reasoning": {
                     "type": "string",
@@ -61,10 +55,17 @@ class EmbodiedActionTool(Tool):
             "required": ["action_type", "parameters", "reasoning"],
         }
 
-    def __init__(self, workspace: Path, provider: LLMProvider, model: str):
+    def __init__(
+        self,
+        workspace: Path,
+        provider: LLMProvider,
+        model: str,
+        registry: EmbodimentRegistry | None = None,
+    ):
         self.workspace = workspace
         self.provider = provider
         self.model = model
+        self.registry = registry
 
     async def execute(
         self,
@@ -73,25 +74,29 @@ class EmbodiedActionTool(Tool):
         reasoning: str,
     ) -> str:
         """Execute the action after Critic validation."""
-        embodied_file = self.workspace / "EMBODIED.md"
-        environment_file = self.workspace / "ENVIRONMENT.md"
-        action_file = self.workspace / "ACTION.md"
-        lessons_file = self.workspace / "LESSONS.md"
+        robot_id = parameters.get("robot_id")
+        if self.registry and self.registry.is_fleet and not robot_id:
+            return "Error: robot_id is required for embodied actions in fleet mode."
+
+        try:
+            embodied_file = self._resolve_embodied_file(robot_id)
+            environment_file = self._resolve_environment_file(robot_id)
+            action_file = self._resolve_action_file(robot_id)
+            lessons_file = self._resolve_lessons_file()
+        except KeyError as exc:
+            return f"Error: {exc}"
 
         if not embodied_file.exists():
-            return "Error: EMBODIED.md not found. Cannot validate action."
+            return f"Error: {embodied_file.name} not found for the target robot. Cannot validate action."
 
         embodied_content = embodied_file.read_text(encoding="utf-8")
-        environment_content = ""
-        if environment_file.exists():
-            environment_content = environment_file.read_text(encoding="utf-8")
+        environment_content = environment_file.read_text(encoding="utf-8") if environment_file.exists() else ""
         params_json = json.dumps(parameters, ensure_ascii=False)
 
         critic_prompt = (
             "You are the Critic Agent for a robot.\n"
-            "Your job is to validate if the proposed action is safe and "
-            "physically possible based on the robot's capabilities and "
-            "the current environment state.\n\n"
+            "Your job is to validate if the proposed action is safe and physically possible "
+            "based on the robot's capabilities and the current environment state.\n\n"
             "# Robot Capabilities (EMBODIED.md)\n"
             f"{embodied_content}\n\n"
             "# Current Environment State (ENVIRONMENT.md)\n"
@@ -100,41 +105,53 @@ class EmbodiedActionTool(Tool):
             f"Action Type: {action_type}\n"
             f"Parameters: {params_json}\n"
             f"Reasoning: {reasoning}\n\n"
-            "When evaluating semantic navigation and localization actions, "
-            "verify target existence, navigation support, safe approach distance, "
-            "and whether current nav state suggests the robot can accept the task.\n"
+            "When evaluating semantic navigation and localization actions, verify target existence, "
+            "navigation support, safe approach distance, connection availability, and whether current "
+            "nav state suggests the robot can accept the task.\n"
             "If it is safe and valid, respond with exactly 'VALID'.\n"
-            "If it is unsafe, out of bounds, or invalid, respond with "
-            "'INVALID: <reason>'.\n"
+            "If it is unsafe, out of bounds, or invalid, respond with 'INVALID: <reason>'.\n"
         )
 
         logger.info("Critic evaluating action: {} {}", action_type, parameters)
-
         response = await self.provider.chat_with_retry(
             messages=[{"role": "user", "content": critic_prompt}],
             model=self.model,
         )
-
         critic_result = response.content.strip()
 
         if critic_result == "VALID":
             return self._accept_action(action_type, parameters, action_file)
-        return self._reject_action(
-            action_type, parameters, reasoning, critic_result, lessons_file,
-        )
+        return self._reject_action(action_type, parameters, reasoning, critic_result, lessons_file)
+
+    def _resolve_environment_file(self, robot_id: str | None) -> Path:
+        if self.registry:
+            return self.registry.resolve_environment_path(robot_id=robot_id, default_workspace=self.workspace)
+        return self.workspace / "ENVIRONMENT.md"
+
+    def _resolve_embodied_file(self, robot_id: str | None) -> Path:
+        if self.registry and robot_id:
+            return self.registry.resolve_embodied_path(robot_id=robot_id, default_workspace=self.workspace)
+        return self.workspace / "EMBODIED.md"
+
+    def _resolve_action_file(self, robot_id: str | None) -> Path:
+        if self.registry and robot_id:
+            return self.registry.resolve_action_path(robot_id=robot_id, default_workspace=self.workspace)
+        return self.workspace / "ACTION.md"
+
+    def _resolve_lessons_file(self) -> Path:
+        if self.registry:
+            return self.registry.resolve_lessons_path(default_workspace=self.workspace)
+        return self.workspace / "LESSONS.md"
 
     @staticmethod
-    def _accept_action(
-        action_type: str,
-        parameters: dict[str, Any],
-        action_file: Path,
-    ) -> str:
+    def _accept_action(action_type: str, parameters: dict[str, Any], action_file: Path) -> str:
         """Write validated action to ACTION.md."""
         action_data = {
             "action_type": action_type,
             "parameters": parameters,
             "status": "pending",
         }
+        action_file.parent.mkdir(parents=True, exist_ok=True)
         action_content = (
             _FENCE_OPEN + "\n"
             + json.dumps(action_data, indent=2, ensure_ascii=False) + "\n"
@@ -142,7 +159,7 @@ class EmbodiedActionTool(Tool):
         )
         action_file.write_text(action_content, encoding="utf-8")
 
-        logger.info("Action validated and written to ACTION.md: {}", action_type)
+        logger.info("Action validated and written to {}: {}", action_file, action_type)
         return f"Action '{action_type}' validated and dispatched to hardware."
 
     @staticmethod
@@ -165,13 +182,12 @@ class EmbodiedActionTool(Tool):
             f"- **Critic Rejection**: {error_msg}\n"
         )
 
+        lessons_file.parent.mkdir(parents=True, exist_ok=True)
         if lessons_file.exists():
             with open(lessons_file, "a", encoding="utf-8") as fh:
                 fh.write(lesson_entry)
         else:
-            lessons_file.write_text(
-                "# Lessons Learned\n" + lesson_entry, encoding="utf-8",
-            )
+            lessons_file.write_text("# Lessons Learned\n" + lesson_entry, encoding="utf-8")
 
         logger.warning("Action rejected by Critic: {}", error_msg)
         return (

@@ -188,19 +188,30 @@ def onboard():
             save_config(config)
             console.print(f"[green]✓[/green] Config refreshed at {config_path} (existing values preserved)")
     else:
-        save_config(Config())
+        config = Config()
+        save_config(config)
         console.print(f"[green]✓[/green] Created config at {config_path}")
 
     console.print("[dim]Config template now uses `maxTokens` + `contextWindowTokens`; `memoryWindow` is no longer a runtime setting.[/dim]")
 
-    # Create workspace
-    workspace = get_workspace_path()
+    from OEA.embodiment_registry import EmbodimentRegistry
 
-    if not workspace.exists():
-        workspace.mkdir(parents=True, exist_ok=True)
-        console.print(f"[green]✓[/green] Created workspace at {workspace}")
-
-    sync_workspace_templates(workspace)
+    registry = EmbodimentRegistry(config)
+    if registry.is_fleet:
+        shared_workspace = registry.resolve_agent_workspace()
+        if not shared_workspace.exists():
+            shared_workspace.mkdir(parents=True, exist_ok=True)
+            console.print(f"[green]✓[/green] Created shared workspace at {shared_workspace}")
+        created = registry.sync_layout()
+        for instance in registry.instances(enabled_only=True):
+            if instance.workspace.exists():
+                console.print(f"[green]✓[/green] Ready robot workspace {instance.robot_id} at {instance.workspace}")
+    else:
+        workspace = get_workspace_path()
+        if not workspace.exists():
+            workspace.mkdir(parents=True, exist_ok=True)
+            console.print(f"[green]✓[/green] Created workspace at {workspace}")
+        sync_workspace_templates(workspace)
 
     console.print(f"\n{__logo__} OEA is ready!")
     console.print("\nNext steps:")
@@ -283,7 +294,10 @@ def _load_runtime_config(config: str | None = None, workspace: str | None = None
 
     loaded = load_config(config_path)
     if workspace:
-        loaded.agents.defaults.workspace = workspace
+        if loaded.is_fleet_mode:
+            loaded.embodiments.shared_workspace = workspace
+        else:
+            loaded.agents.defaults.workspace = workspace
     return loaded
 
 
@@ -323,12 +337,18 @@ def gateway(
         import logging
         logging.basicConfig(level=logging.DEBUG)
 
+    from OEA.embodiment_registry import EmbodimentRegistry
+
     config = _load_runtime_config(config, workspace)
     _print_deprecated_memory_window_notice(config)
     port = port if port is not None else config.gateway.port
+    registry = EmbodimentRegistry(config)
 
     console.print(f"{__logo__} Starting OEA gateway on port {port}...")
-    sync_workspace_templates(config.workspace_path)
+    if registry.is_fleet:
+        registry.sync_layout()
+    else:
+        sync_workspace_templates(config.workspace_path)
     bus = MessageBus()
     provider = _make_provider(config)
     session_manager = SessionManager(config.workspace_path)
@@ -353,6 +373,7 @@ def gateway(
         session_manager=session_manager,
         mcp_servers=config.tools.mcp_servers,
         channels_config=config.channels,
+        embodiment_registry=registry,
     )
 
     # Set cron callback (needs agent)
@@ -505,9 +526,15 @@ def agent(
     from OEA.config.paths import get_cron_dir
     from OEA.cron.service import CronService
 
+    from OEA.embodiment_registry import EmbodimentRegistry
+
     config = _load_runtime_config(config, workspace)
     _print_deprecated_memory_window_notice(config)
-    sync_workspace_templates(config.workspace_path)
+    registry = EmbodimentRegistry(config)
+    if registry.is_fleet:
+        registry.sync_layout()
+    else:
+        sync_workspace_templates(config.workspace_path)
 
     bus = MessageBus()
     provider = _make_provider(config)
@@ -535,6 +562,7 @@ def agent(
         restrict_to_workspace=config.tools.restrict_to_workspace,
         mcp_servers=config.tools.mcp_servers,
         channels_config=config.channels,
+        embodiment_registry=registry,
     )
 
     # Show spinner when logs are off (no output to miss); skip when logs are on

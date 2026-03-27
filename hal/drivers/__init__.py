@@ -4,8 +4,8 @@ hal/drivers/__init__.py
 Driver registry — maps short names to fully-qualified class paths.
 
 To register a new driver, add one entry to ``DRIVER_REGISTRY`` and create
-the corresponding module under ``hal/drivers/``.  No other code needs to
-change.
+the corresponding module under ``hal/drivers/``.  External drivers can also
+be installed as plugins and resolved from the local OEA plugin registry.
 """
 
 from __future__ import annotations
@@ -14,6 +14,7 @@ import importlib
 from typing import Any
 
 from hal.base_driver import BaseDriver
+from hal.plugins import activate_external_driver, list_external_drivers, resolve_external_driver
 
 # ── Registry ────────────────────────────────────────────────────────────────
 # Format:  "short_name": "module_path.ClassName"
@@ -44,13 +45,16 @@ def load_driver(name: str, **kwargs: Any) -> BaseDriver:
     ImportError
         If the driver module cannot be imported (missing dependency).
     """
-    if name not in DRIVER_REGISTRY:
-        available = ", ".join(sorted(DRIVER_REGISTRY))
-        raise KeyError(
-            f"Unknown driver {name!r}. Available drivers: {available}"
-        )
-
-    dotted = DRIVER_REGISTRY[name]
+    dotted = DRIVER_REGISTRY.get(name)
+    if dotted is None:
+        spec = resolve_external_driver(name)
+        if spec is None:
+            available = ", ".join(list_drivers())
+            raise KeyError(
+                f"Unknown driver {name!r}. Available drivers: {available}"
+            )
+        activate_external_driver(spec)
+        dotted = spec.dotted_path
     module_path, class_name = dotted.rsplit(".", 1)
     module = importlib.import_module(module_path)
     cls = getattr(module, class_name)
@@ -63,4 +67,4 @@ def load_driver(name: str, **kwargs: Any) -> BaseDriver:
 
 def list_drivers() -> list[str]:
     """Return sorted list of registered driver names."""
-    return sorted(DRIVER_REGISTRY)
+    return sorted(set(DRIVER_REGISTRY) | set(list_external_drivers()))

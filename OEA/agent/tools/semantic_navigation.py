@@ -9,15 +9,17 @@ from typing import Any
 
 from OEA.agent.tools.base import Tool
 from OEA.agent.tools.embodied import EmbodiedActionTool
+from OEA.embodiment_registry import EmbodimentRegistry
 from hal.simulation.scene_io import load_environment_doc
 
 
 class SemanticNavigationTool(Tool):
     """Resolve semantic targets into concrete navigation actions."""
 
-    def __init__(self, workspace: Path, action_tool: EmbodiedActionTool):
+    def __init__(self, workspace: Path, action_tool: EmbodiedActionTool, registry: EmbodimentRegistry | None = None):
         self.workspace = workspace
         self.action_tool = action_tool
+        self.registry = registry
 
     @property
     def name(self) -> str:

@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable
 from loguru import logger
 
 from OEA.agent.context import ContextBuilder
+from OEA.embodiment_registry import EmbodimentRegistry
 from OEA.agent.memory import MemoryConsolidator
 from OEA.agent.subagent import SubagentManager
 from OEA.agent.tools.cron import CronTool
@@ -69,6 +70,7 @@ class AgentLoop:
         session_manager: SessionManager | None = None,
         mcp_servers: dict | None = None,
         channels_config: ChannelsConfig | None = None,
+        embodiment_registry: EmbodimentRegistry | None = None,
     ):
         from OEA.config.schema import ExecToolConfig
         self.bus = bus
@@ -87,6 +89,7 @@ class AgentLoop:
         self.context = ContextBuilder(workspace)
         self.sessions = session_manager or SessionManager(workspace)
         self.tools = ToolRegistry()
+        self.embodiment_registry = embodiment_registry
         self.subagents = SubagentManager(
             provider=provider,
             workspace=workspace,
@@ -148,12 +151,14 @@ class AgentLoop:
             workspace=self.workspace,
             provider=self.provider,
             model=self.model,
+            registry=self.embodiment_registry,
         )
         self.tools.register(action_tool)
         self.tools.register(SceneGraphQueryTool(workspace=self.workspace))
         self.tools.register(SemanticNavigationTool(
             workspace=self.workspace,
             action_tool=action_tool,
+            registry=self.embodiment_registry,
         ))
 
     async def _connect_mcp(self) -> None:

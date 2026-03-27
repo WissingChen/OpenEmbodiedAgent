@@ -21,3 +21,5 @@ poetry.lock
 botpy.log
 nano.*.save
 
+SECURITY.md
+docs/dev_plans
