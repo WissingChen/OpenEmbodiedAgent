@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="docs/imgs/logo.png" alt="OpenEmbodiedAgent" width="500">
+  <img src="docs/imgs/PhyAgentOS.png" alt="PhyAgentOS" width="500">
   <h1>OpenEmbodiedAgent (OEA)</h1>
   <p><b>A Decoupled Protocol-Based Framework for Self-Evolving and Cross-Embodiment Agents</b></p>
   <p>
@@ -14,9 +14,9 @@
 
 ## 📖 Introduction
 
-**OpenEmbodiedAgent (OEA)** is a self-evolving embodied AI framework based on Agentic workflows. Moving away from the "black-box" model of traditional "large models directly controlling hardware," OEA pioneers a **"Cognitive-Physical Decoupling"** architectural paradigm. By constructing a Language-Action Interface, it completely decouples action representation from embodiment morphology, enabling standardized mapping from high-reasoning cloud models to edge physical execution layers.
+**Physical Agent Operation System (PhyAgentOS)** is a self-evolving embodied AI framework based on Agentic workflows. Moving away from the "black-box" model of traditional "large models directly controlling hardware," PhyAgentOS pioneers a **"Cognitive-Physical Decoupling"** architectural paradigm. By constructing a Language-Action Interface, it completely decouples action representation from embodiment morphology, enabling standardized mapping from high-reasoning cloud models to edge physical execution layers.
 
-OEA utilizes a **"State-as-a-File"** protocol matrix, natively supporting zero-code migration across hardware platforms, sandbox-driven tool self-generation, and safety correction mechanisms based on Multi-Agent Critic verification.
+PhyAgentOS utilizes a **"State-as-a-File"** protocol matrix, natively supporting zero-code migration across hardware platforms, sandbox-driven tool self-generation, and safety correction mechanisms based on Multi-Agent Critic verification.
 
 ## ✨ Core Features
 
@@ -34,27 +34,27 @@ OEA utilizes a **"State-as-a-File"** protocol matrix, natively supporting zero-c
 <div align="center">
   <img src="docs/imgs/setup.gif" alt="rekep" width="900">
   <br>
-  OEA deploys robot arms with one click, no coding required (AgileX PIPER).
+  PhyAgentOS deploys robot arms with one click, no coding required (AgileX PIPER).
 </div>
 
 <div align="center">
   <img src="docs/imgs/SAM3.gif" alt="rekep" width="900">
   <br>
-  OEA achieves natural language-driven grasping tasks through SAM3 (AgileX PIPER).
+  PhyAgentOS achieves natural language-driven grasping tasks through SAM3 (AgileX PIPER).
 </div>
 
 <div align="center">
   <img src="docs/imgs/ReKep.gif" alt="rekep" width="900">
   <br>
-  OEA achieves natural language-driven grasping tasks through ReKep (Dobot Nova 2).
+  PhyAgentOS achieves natural language-driven grasping tasks through ReKep (Dobot Nova 2).
 </div>
 
 ## 🏗️ Architecture
 
-OEA's core is a local workspace where software and hardware operate as independent daemons reading/writing files:
+PhyAgentOS's core is a local workspace where software and hardware operate as independent daemons reading/writing files:
 
 <div align="center">
-  <img src="docs/imgs/oea_en.png" alt="OpenEmbodiedAgent" width="900">
+  <img src="docs/imgs/oea_en.png" alt="PhyAgentOS" width="900">
 </div>
 
 ## 🚀 Quick Start
@@ -146,7 +146,7 @@ OpenEmbodiedAgent/
 
 ## 🛠️ Supported Devices
 
-OEA supports various embodiment types through the HAL (Hardware Abstraction Layer) protocol.
+PhyAgentOS supports various embodiment types through the HAL (Hardware Abstraction Layer) protocol.
 
 | Embodiment Type | Robot | Status | Remarks |
 | :--- | :--- | :--- | :--- |
@@ -160,7 +160,7 @@ OEA supports various embodiment types through the HAL (Hardware Abstraction Laye
 | **Edu Robot** | Hiwonder Series | 🔴 Unsupported | Awaiting driver plugin development |
 | **General Environment** | Built-in Simulator | 🟢 Verified | Lightweight simulation based on disk mapping |
 
-> **Note**: OEA is designed with a plugin architecture. Any hardware that supports a Python control interface can be quickly integrated via `hal/drivers/`.
+> **Note**: PhyAgentOS is designed with a plugin architecture. Any hardware that supports a Python control interface can be quickly integrated via `hal/drivers/`.
 
 ## 🤝 Contribute
 
