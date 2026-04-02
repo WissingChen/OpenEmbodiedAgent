@@ -160,7 +160,7 @@ PhyAgentOS supports various embodiment types through the HAL (Hardware Abstracti
 | **Edu Robot** | Hiwonder Series | 🔴 Unsupported | Awaiting driver plugin development |
 | **General Environment** | Built-in Simulator | 🟢 Verified | Lightweight simulation based on disk mapping |
 
-> **Note**: PhyAgentOS is designed with a plugin architecture. Any hardware that supports a Python control interface can be quickly integrated via `hal/drivers/`.
+> **Note**: PhyAgentOS is designed with a plugin architecture. Any hardware that supports a Python control interface can be quickly integrated via `hal/drivers/`. A community plugin template is available at `docs/PLUGIN_DEVELOPMENT_GUIDE.md`, with the Chinese version at `docs/PLUGIN_DEVELOPMENT_GUIDE_zh.md`.
 
 ## 🤝 Contribute
 
