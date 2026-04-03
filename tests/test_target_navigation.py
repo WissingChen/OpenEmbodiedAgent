@@ -215,3 +215,36 @@ def test_watchdog_target_navigation_preserves_environment_shape(tmp_path: Path) 
     assert "scene_graph" in updated
     assert "objects" in updated
     assert updated["robots"]["go2_edu_001"]["nav_state"]["status"] in {"arrived", "blocked"}
+
+
+def test_go2_driver_uses_configured_robot_id(tmp_path: Path) -> None:
+    _write_workspace_files(tmp_path)
+    custom_robot_id = "go2_lab_b"
+    env = load_environment_doc(tmp_path / "ENVIRONMENT.md")
+    env["robots"][custom_robot_id] = env["robots"].pop("go2_edu_001")
+    save_environment_doc(tmp_path / "ENVIRONMENT.md", env)
+
+    action_file = _write_action(
+        tmp_path,
+        {
+            "action_type": "target_navigation",
+            "parameters": {
+                "robot_id": custom_robot_id,
+                "target_label": "cup",
+                "detection_hint": {"rgb_range": [[180, 0, 0], [255, 60, 60]]},
+                "success_distance_m": 3.5,
+                "timeout_s": 2,
+            },
+            "status": "pending",
+        },
+    )
+
+    with load_driver("go2_edu", gui=False, target_navigation_backend="mock", robot_id=custom_robot_id) as driver:
+        driver.connect()
+        driver._target_navigation_backend._bridge.obstacle_cells = set()
+        _enable_mock_depth_success(driver._target_navigation_backend._bridge)
+        _poll_once(driver, action_file, tmp_path / "ENVIRONMENT.md")
+
+    updated = load_environment_doc(tmp_path / "ENVIRONMENT.md")
+    assert custom_robot_id in updated["robots"]
+    assert updated["robots"][custom_robot_id]["nav_state"]["target_label"] == "cup"

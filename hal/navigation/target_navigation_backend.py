@@ -1,46 +1,21 @@
-"""Adapter layer that embeds navigation_sdk into OEA drivers."""
+"""OEA-native target navigation backend for HAL drivers."""
 
 from __future__ import annotations
 
 from dataclasses import asdict, is_dataclass
-from pathlib import Path
 from typing import Any
 
-
-def _ensure_navigation_sdk_importable() -> None:
-    import sys
-
-    sdk_root = Path(__file__).resolve().parents[3] / "navigation_sdk"
-    if sdk_root.exists():
-        sdk_root_str = str(sdk_root)
-        if sdk_root_str not in sys.path:
-            sys.path.insert(0, sdk_root_str)
-
-
-def _import_navigation_sdk() -> dict[str, Any]:
-    _ensure_navigation_sdk_importable()
-    from navigation_mcp.bridge import Go2BridgeConfig, Go2MoveBridge, SimulatedRobotBridge
-    from navigation_mcp.models import NavPhase, NavigationConfig, Observation
-    from navigation_mcp.navigator import NavigationEngine
-
-    return {
-        "Go2BridgeConfig": Go2BridgeConfig,
-        "Go2MoveBridge": Go2MoveBridge,
-        "SimulatedRobotBridge": SimulatedRobotBridge,
-        "NavPhase": NavPhase,
-        "NavigationConfig": NavigationConfig,
-        "NavigationEngine": NavigationEngine,
-        "Observation": Observation,
-    }
+from hal.drivers.go2_navigation_bridge import Go2BridgeConfig, Go2MoveBridge
+from hal.navigation.bridge import SimulatedRobotBridge
+from hal.navigation.target_navigation_engine import NavigationEngine
 
 
 class TargetNavigationBackend:
-    """Embed the navigation_sdk engine while keeping OEA runtime semantics."""
+    """Run target navigation inside OEA while keeping existing driver semantics."""
 
     def __init__(self, backend_mode: str = "mock", **config: Any):
         self.backend_mode = backend_mode
         self.config = dict(config)
-        self._sdk: dict[str, Any] | None = None
         self._bridge: Any = None
         self._engine: Any = None
         self._last_status: dict[str, Any] = {}
@@ -49,13 +24,12 @@ class TargetNavigationBackend:
     def connect(self) -> bool:
         if self._connected:
             return True
-        sdk = self._sdk_api()
         if self.backend_mode == "real":
-            cfg = sdk["Go2BridgeConfig"](**self._bridge_config_kwargs())
-            self._bridge = sdk["Go2MoveBridge"](cfg)
+            cfg = Go2BridgeConfig(**self._bridge_config_kwargs())
+            self._bridge = Go2MoveBridge(cfg)
         else:
-            self._bridge = sdk["SimulatedRobotBridge"]()
-        self._engine = sdk["NavigationEngine"](self._bridge)
+            self._bridge = SimulatedRobotBridge()
+        self._engine = NavigationEngine(self._bridge)
         self._connected = True
         return True
 
@@ -172,11 +146,6 @@ class TargetNavigationBackend:
         }
         return {robot_id: state}
 
-    def _sdk_api(self) -> dict[str, Any]:
-        if self._sdk is None:
-            self._sdk = _import_navigation_sdk()
-        return self._sdk
-
     def _bridge_config_kwargs(self) -> dict[str, Any]:
         allowed = {
             "host_bind",
@@ -197,8 +166,6 @@ class TargetNavigationBackend:
             "auto_start_remote",
             "remote_livox_setup",
             "remote_livox_launch",
-            "remote_data_script",
-            "remote_motion_script",
             "remote_data_command",
             "remote_motion_command",
             "remote_data_video_backend",

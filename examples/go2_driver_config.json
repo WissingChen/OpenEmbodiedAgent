@@ -12,7 +12,7 @@
   "ssh_password": "123",
   "remote_ros_choice": "1",
   "remote_sudo_password": "123",
-  "remote_project_dir": "/home/unitree/navigation_sdk",
+  "remote_project_dir": "/home/unitree/OpenEmbodiedAgent",
   "remote_python": "python3",
   "remote_sync_before_start": true,
   "remote_livox_setup": "source /home/unitree/mid-360/ws_livox/install/setup.sh",
