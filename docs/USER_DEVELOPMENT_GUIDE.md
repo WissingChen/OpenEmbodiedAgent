@@ -32,6 +32,7 @@ PhyAgentOS 采用“认知-物理解耦”的架构，通过 Markdown 文件（W
 ### 3.3 外部插件机制
 对于不希望直接修改 PhyAgentOS 核心代码的外部硬件，可以使用插件机制。
 参考 `scripts/deploy_rekep_real_plugin.py` 了解如何动态加载外部驱动。
+如果你要开发独立插件并对外发布，推荐继续阅读 `docs/PLUGIN_DEVELOPMENT_GUIDE_zh.md`；对应英文版见 `docs/PLUGIN_DEVELOPMENT_GUIDE.md`。两份文档都以 ReKep 插件为例给出了完整的开发、部署和调用模板。
 
 ## 4. 编写自定义技能 (Skill)
 
