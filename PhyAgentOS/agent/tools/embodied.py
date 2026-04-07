@@ -15,12 +15,17 @@ except ImportError:  # pragma: no cover - fallback for lightweight test envs
 from PhyAgentOS.agent.tools.base import Tool
 from PhyAgentOS.embodiment_registry import EmbodimentRegistry
 from PhyAgentOS.providers.base import LLMProvider
+from PhyAgentOS.utils.action_queue import (
+    append_action,
+    dump_action_document,
+    empty_action_document,
+    normalize_action_document,
+    parse_action_markdown,
+    pending_action_type,
+)
 
 if TYPE_CHECKING:
     from PhyAgentOS.embodiment_registry import EmbodimentRegistry
-
-_FENCE_OPEN = "```json"
-_FENCE_CLOSE = "```"
 
 
 class EmbodiedActionTool(Tool):
@@ -112,9 +117,7 @@ class EmbodiedActionTool(Tool):
             f"Action Type: {action_type}\n"
             f"Parameters: {params_json}\n"
             f"Reasoning: {reasoning}\n\n"
-            "When evaluating semantic navigation, target navigation, and localization actions, verify target existence, "
-            "navigation support, safe approach distance, connection availability, and whether current "
-            "nav state suggests the robot can accept the task.\n"
+            f"{self._critic_guidance(action_type)}\n"
             "If it is safe and valid, respond with exactly 'VALID'.\n"
             "If it is unsafe, out of bounds, or invalid, respond with 'INVALID: <reason>'.\n"
         )
@@ -153,21 +156,52 @@ class EmbodiedActionTool(Tool):
     @staticmethod
     def _accept_action(action_type: str, parameters: dict[str, Any], action_file: Path) -> str:
         """Write validated action to ACTION.md."""
-        action_data = {
-            "action_type": action_type,
-            "parameters": parameters,
-            "status": "pending",
-        }
+        document = EmbodiedActionTool._load_action_document(action_file)
+        if document is None:
+            return (
+                "Error: ACTION.md contains unreadable content. "
+                "Please repair it before dispatching another action."
+            )
+        existing_action = pending_action_type(document)
+        if existing_action is not None:
+            return (
+                f"Error: ACTION.md already contains pending action '{existing_action}'. "
+                "Wait for the watchdog to consume it before dispatching another action."
+            )
+        action_data = append_action(document, action_type=action_type, parameters=parameters)
         action_file.parent.mkdir(parents=True, exist_ok=True)
-        action_content = (
-            _FENCE_OPEN + "\n"
-            + json.dumps(action_data, indent=2, ensure_ascii=False) + "\n"
-            + _FENCE_CLOSE + "\n"
-        )
+        action_content = dump_action_document(action_data)
         action_file.write_text(action_content, encoding="utf-8")
 
         logger.info("Action validated and written to {}: {}", action_file, action_type)
         return f"Action '{action_type}' validated and dispatched to hardware."
+
+    @staticmethod
+    def _load_action_document(action_file: Path) -> dict[str, Any] | None:
+        if not action_file.exists():
+            return empty_action_document()
+        content = action_file.read_text(encoding="utf-8").strip()
+        if not content:
+            return empty_action_document()
+        payload = parse_action_markdown(content)
+        if payload is None:
+            return None
+        return normalize_action_document(payload)
+
+    @staticmethod
+    def _critic_guidance(action_type: str) -> str:
+        if action_type == "target_navigation":
+            return (
+                "When evaluating target navigation, do not require the target to already exist in the scene graph. "
+                "Instead verify that lower-level target navigation is supported, the requested visual target or "
+                "detection hint is specific enough to pursue safely, connection state allows navigation, and the "
+                "current nav state suggests the robot can accept the task."
+            )
+        return (
+            "When evaluating semantic navigation and localization actions, verify target existence, navigation "
+            "support, safe approach distance, connection availability, and whether current nav state suggests the "
+            "robot can accept the task."
+        )
 
     @staticmethod
     def _reject_action(
