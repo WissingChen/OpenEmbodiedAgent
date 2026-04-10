@@ -73,11 +73,11 @@ PhyAgentOS's core is a local workspace where software and hardware operate as in
 
 ### 1. Install Dependencies
 ```bash
-git clone https://github.com/your-repo/Physical Agent Operating System.git
-cd Physical Agent Operating System
+git clone https://github.com/your-repo/PhyAgentOS.git
+cd PhyAgentOS
 pip install -e .
 # Install simulation dependencies (e.g., watchdog)
-pip install watchdog
+pip install pybullet watchdog
 
 # Optional: Install external ReKep real-world plugin
 python scripts/deploy_rekep_real_plugin.py \
@@ -128,7 +128,7 @@ You will see the action execution in the simulation logs in Terminal 1, and rece
 ## 📁 Project Structure
 
 ```text
-Physical Agent Operating System/
+PhyAgentOS/
 ├── PhyAgentOS/                # Track A: Software Brain Core
 │   ├── agent/              # Agent Logic (Planner, Critic)
 │   ├── templates/          # Workspace Markdown Templates
