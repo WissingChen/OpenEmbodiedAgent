@@ -30,7 +30,8 @@ from PhyAgentOS.agent.tools.semantic_navigation import SemanticNavigationTool
 from PhyAgentOS.agent.tools.spawn import SpawnTool
 from PhyAgentOS.agent.tools.web import WebFetchTool, WebSearchTool
 from PhyAgentOS.agent.tools.target_navigation import TargetNavigationTool
-from PhyAgentOS.bus.events import InboundMessage, OutboundMessage
+from PhyAgentOS.agent.tools.task import TaskPlanningTool
+from PhyAgentOS.bus.events import InboundMessage, OutboundMessage, PerceptionEvent
 from PhyAgentOS.bus.queue import MessageBus
 from PhyAgentOS.providers.base import LLMProvider
 from PhyAgentOS.providers.providers_manager import ProvidersManager
@@ -166,6 +167,7 @@ class AgentLoop:
             action_tool=action_tool,
             registry=self.embodiment_registry,
         ))
+        self.tools.register(TaskPlanningTool(workspace=self.workspace))
 
     async def _connect_mcp(self) -> None:
         """Connect to configured MCP servers (one-time, lazy)."""
@@ -295,6 +297,8 @@ class AgentLoop:
             try:
                 msg = await asyncio.wait_for(self.bus.consume_inbound(), timeout=1.0)
             except asyncio.TimeoutError:
+                # On each idle cycle, drain and inject any pending perception events
+                await self._inject_perception_events()
                 continue
 
             cmd = msg.content.strip().lower()
@@ -306,6 +310,42 @@ class AgentLoop:
                 task = asyncio.create_task(self._dispatch(msg))
                 self._active_tasks.setdefault(msg.session_key, []).append(task)
                 task.add_done_callback(lambda t, k=msg.session_key: self._active_tasks.get(k, []) and self._active_tasks[k].remove(t) if t in self._active_tasks.get(k, []) else None)
+
+    async def _inject_perception_events(self) -> None:
+        """Drain perception events from the bus and inject them as system messages.
+
+        Each :class:`PerceptionEvent` is converted into a ``system``-channel
+        :class:`InboundMessage` so that ``_process_message`` can handle it
+        with the normal LLM reasoning path.
+
+        The ``chat_id`` of the system message is set to the event's
+        ``session_key`` when provided, otherwise it defaults to
+        ``"cli:direct"`` so there is always a valid routing target.
+        """
+        events = self.bus.drain_perception()
+        for event in events:
+            session_key = event.session_key or "cli:direct"
+            # session_key format is "channel:chat_id"
+            if ":" in session_key:
+                channel, chat_id = session_key.split(":", 1)
+            else:
+                channel, chat_id = "cli", session_key
+
+            content = (
+                f"[Perception Alert — robot_id={event.robot_id}, "
+                f"event_type={event.event_type}]\n{event.description}"
+            )
+            logger.info(
+                "Injecting perception event: robot={} type={} session={}",
+                event.robot_id, event.event_type, session_key,
+            )
+            sys_msg = InboundMessage(
+                channel="system",
+                sender_id=f"perception:{event.robot_id}",
+                chat_id=f"{channel}:{chat_id}",
+                content=content,
+            )
+            await self.bus.publish_inbound(sys_msg)
 
     async def _handle_stop(self, msg: InboundMessage) -> None:
         """Cancel all active tasks and subagents for the session."""
@@ -430,7 +470,7 @@ class AgentLoop:
                                   content="New session started.")
         if cmd == "/help":
             lines = [
-                "🤖 PhyAgentOS commands:",
+                "🐈 PhyAgentOS commands:",
                 "/new — Start a new conversation",
                 "/stop — Stop the current task",
                 "/restart — Restart the bot",
