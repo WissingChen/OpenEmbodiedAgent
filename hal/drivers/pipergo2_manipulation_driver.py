@@ -11,6 +11,7 @@ import importlib
 import json
 import math
 import sys
+import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -27,6 +28,7 @@ class PiperGo2ManipulationDriver(BaseDriver):
         self._gui = gui
         self._api = None
         self._env = None
+        self._env_lock = threading.RLock()
         self._last_obs: Any = None
         self._last_scene: dict[str, dict] = {}
 
@@ -297,6 +299,18 @@ class PiperGo2ManipulationDriver(BaseDriver):
             xy = (float(self._robot_start[0]), float(self._robot_start[1]))
             self._stabilize_robot(xy, n_stab)
             steps.append(f"stabilize:{n_stab}")
+
+        if rb.get("micro_navigate_on_start", False):
+            off = rb.get("micro_navigate_offset_xy", [0.1, 0.0])
+            if isinstance(off, (list, tuple)) and len(off) >= 2:
+                gx = float(self._robot_start[0]) + float(off[0])
+                gy = float(self._robot_start[1]) + float(off[1])
+                micro_msg = self._navigate_xy(
+                    [gx, gy],
+                    max_steps=int(rb.get("micro_navigate_max_steps", 500)),
+                    threshold=float(rb.get("micro_navigate_threshold", self._navigation_threshold)),
+                )
+                steps.append(f"micro_navigate:{micro_msg}")
         return "bootstrap[" + ",".join(steps) + "]"
 
     def _focus_view_xy(self, robot_xy: tuple[float, ...], robot_z: float) -> None:
@@ -325,7 +339,8 @@ class PiperGo2ManipulationDriver(BaseDriver):
 
     def _apply_room_lighting(self) -> bool:
         """Best-effort switch to Grey Studio style environment lighting."""
-        if self._room_lighting not in {"grey_studio", "gray_studio"}:
+        lighting = self._room_lighting.replace("-", "_").replace(" ", "_")
+        if lighting not in {"grey_studio", "gray_studio"}:
             return False
         # Avoid omni.kit.commands here because some Isaac builds log hard errors
         # when these commands are unregistered (even if wrapped in try/except).
@@ -343,9 +358,7 @@ class PiperGo2ManipulationDriver(BaseDriver):
                     settings.set(key, value)
                 except Exception:
                     pass
-            # Optional: also try setting a named dome light color when present.
             try:
-                from pxr import Sdf  # type: ignore
                 stage = self._api._env.runner._world.stage if self._api and self._env else None
                 if stage is not None:
                     for path in ("/Environment/DomeLight", "/World/DomeLight"):
@@ -354,9 +367,43 @@ class PiperGo2ManipulationDriver(BaseDriver):
                             attr = prim.GetAttribute("inputs:color")
                             if attr:
                                 attr.Set((0.72, 0.74, 0.78))
+                            iattr = prim.GetAttribute("inputs:intensity")
+                            if iattr:
+                                iattr.Set(1800.0)
                             break
             except Exception:
                 pass
+            self._ensure_default_dome_light()
+            return True
+        except Exception:
+            return self._ensure_default_dome_light()
+
+    def _ensure_default_dome_light(self) -> bool:
+        if self._api is None or self._env is None:
+            return False
+        try:
+            from pxr import Sdf, UsdLux
+
+            stage = self._api._env.runner._world.stage
+            if stage is None:
+                return False
+
+            target_path = None
+            for path in ("/Environment/DomeLight", "/World/DomeLight", "/World/PAOS_DefaultDomeLight"):
+                prim = stage.GetPrimAtPath(path)
+                if prim and prim.IsValid():
+                    target_path = path
+                    break
+            if target_path is None:
+                target_path = "/World/PAOS_DefaultDomeLight"
+                UsdLux.DomeLight.Define(stage, Sdf.Path(target_path))
+            dome = UsdLux.DomeLight(stage.GetPrimAtPath(target_path))
+
+            dome.CreateIntensityAttr(1800.0)
+            dome.CreateExposureAttr(0.0)
+            dome.CreateColorAttr((0.72, 0.74, 0.78))
+            if not dome.GetTextureFileAttr().HasAuthoredValue():
+                dome.CreateTextureFileAttr("")
             return True
         except Exception:
             return False
@@ -385,7 +432,8 @@ class PiperGo2ManipulationDriver(BaseDriver):
         action_name = self._resolve_nav_action_name()
         idle_action = {action_name: [(float(target_xy[0]), float(target_xy[1]), 0.0)]}
         for _ in range(settle_steps):
-            self._last_obs, _, terminated, _, _ = self._env.step(action=idle_action)
+            with self._env_lock:
+                self._last_obs, _, terminated, _, _ = self._env.step(action=idle_action)
             ep = terminated[0] if isinstance(terminated, (list, tuple)) else bool(terminated)
             if ep:
                 break
@@ -404,7 +452,8 @@ class PiperGo2ManipulationDriver(BaseDriver):
         if self._env is None:
             return "Error: API not started. Dispatch action_type='start' first."
         action = params.get("action", {})
-        self._last_obs, _, _, _, _ = self._env.step(action=action)
+        with self._env_lock:
+            self._last_obs, _, _, _, _ = self._env.step(action=action)
         return "Environment stepped."
 
     def _idle_step_if_due(self) -> None:
@@ -415,8 +464,18 @@ class PiperGo2ManipulationDriver(BaseDriver):
             return
         self._last_idle_step_ts = now
         steps = max(1, self._idle_steps_per_cycle)
+        # Empty env.step({}) advances physics without running AliengoMoveBySpeedController.forward,
+        # so policy observation buffers (_old_policy_obs) desync from the articulation — later
+        # move_to_point can output a frozen / collapsed gait. Hold current XY via move_to_point instead.
+        action_name = self._resolve_nav_action_name()
+        robot_obs = self._extract_robot_obs(self._last_obs)
+        hold_xy = self._xy_from_robot_position(robot_obs.get("position") if robot_obs else None)
+        if hold_xy is None:
+            hold_xy = (float(self._robot_start[0]), float(self._robot_start[1]))
+        hold_action = {action_name: [(float(hold_xy[0]), float(hold_xy[1]), 0.0)]}
         for _ in range(steps):
-            self._last_obs, _, _, _, _ = self._env.step(action={})
+            with self._env_lock:
+                self._last_obs, _, _, _, _ = self._env.step(action=hold_action)
 
     def _api_call(self, params: dict[str, Any]) -> str:
         if self._api is None:
@@ -492,22 +551,30 @@ class PiperGo2ManipulationDriver(BaseDriver):
         action_name = str(action_name_override or self._resolve_nav_action_name())
         goal_action = {action_name: [(float(xy[0]), float(xy[1]), 0.0)]}
         dist = 9999.0
+        stable_finished = 0
         for _ in range(max_steps):
-            self._last_obs, _, terminated, _, _ = self._env.step(action=goal_action)
-            robot_obs = self._extract_robot_obs(self._last_obs)
-            if not robot_obs:
-                continue
-            pos = robot_obs.get("position")
-            if not isinstance(pos, (list, tuple)) or len(pos) < 2:
-                continue
-            dx = float(pos[0]) - float(xy[0])
-            dy = float(pos[1]) - float(xy[1])
-            dist = math.hypot(dx, dy)
+            with self._env_lock:
+                self._last_obs, _, terminated, _, _ = self._env.step(action=goal_action)
             episode_terminated = terminated[0] if isinstance(terminated, (list, tuple)) else bool(terminated)
             if episode_terminated:
                 return "navigate terminated early."
-            if dist <= threshold:
-                return f"navigate ok: reached xy=({xy[0]:.4f},{xy[1]:.4f}), dist={dist:.4f}"
+            robot_obs = self._extract_robot_obs(self._last_obs)
+            if not robot_obs:
+                continue
+            pos_xy = self._xy_from_robot_position(robot_obs.get("position"))
+            if pos_xy is not None:
+                dx = pos_xy[0] - float(xy[0])
+                dy = pos_xy[1] - float(xy[1])
+                dist = math.hypot(dx, dy)
+                if dist <= threshold:
+                    return f"navigate ok: reached xy=({xy[0]:.4f},{xy[1]:.4f}), dist={dist:.4f}"
+            ctrl = (robot_obs.get("controllers") or {}).get(action_name) or {}
+            if bool(ctrl.get("finished")):
+                stable_finished += 1
+                if stable_finished >= 15:
+                    return f"navigate ok: controller finished (dist={dist:.4f})"
+            else:
+                stable_finished = 0
         return f"navigate failed: dist={dist:.4f}"
 
     def _rebuild_scene_narration(self) -> None:
@@ -581,6 +648,8 @@ class PiperGo2ManipulationDriver(BaseDriver):
             )
         elif navigate_after_pick and pick_ok:
             nav_xy_raw = params.get("navigate_after_pick_xy")
+            if not (isinstance(nav_xy_raw, (list, tuple)) and len(nav_xy_raw) >= 2):
+                nav_xy_raw = defaults.get("navigate_after_pick_xy")
             if isinstance(nav_xy_raw, (list, tuple)) and len(nav_xy_raw) >= 2:
                 nav_xy = [float(nav_xy_raw[0]), float(nav_xy_raw[1])]
             elif place_target and place_target.get("position") and len(place_target["position"]) >= 2:
@@ -752,14 +821,36 @@ class PiperGo2ManipulationDriver(BaseDriver):
         if not isinstance(robot, dict):
             return None
         pos = robot.get("position")
-        if isinstance(pos, (list, tuple)) and len(pos) >= 3:
+        pos_list: list[float] | None = None
+        if pos is not None:
+            try:
+                if hasattr(pos, "tolist"):
+                    pos = pos.tolist()
+                if isinstance(pos, (list, tuple)) and len(pos) >= 3:
+                    pos_list = [float(pos[0]), float(pos[1]), float(pos[2])]
+            except (TypeError, ValueError):
+                pos_list = None
+        if pos_list is not None:
             return {
-                "position": [float(pos[0]), float(pos[1]), float(pos[2])],
+                "position": pos_list,
                 "render": bool(robot.get("render", False)),
             }
         return {
             "render": bool(robot.get("render", False)),
         }
+
+    @staticmethod
+    def _xy_from_robot_position(position: Any) -> tuple[float, float] | None:
+        if position is None:
+            return None
+        try:
+            if hasattr(position, "tolist"):
+                position = position.tolist()
+            if isinstance(position, (list, tuple)) and len(position) >= 2:
+                return (float(position[0]), float(position[1]))
+        except (TypeError, ValueError):
+            return None
+        return None
 
     @staticmethod
     def _extract_robot_obs(obs_data: Any) -> dict[str, Any] | None:
