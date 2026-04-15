@@ -14,11 +14,11 @@
   "idle_step_interval_s": 0.033,
   "room_lighting": "grey_studio",
   "camera_eye_offset": [
-    -2.8,
+    2.8,
     -2.2,
     1.8
   ],
-  "camera_target_z_offset": -0.4,
+  "camera_target_z_offset": 0.0,
   "camera_target_min_z": 0.2,
   "waypoints": {
     "staging_table": [
@@ -240,9 +240,20 @@
   "room_bootstrap": {
     "enabled": true,
     "apply_room_lighting": true,
+    "pre_collision_passive_steps": 60,
+    "post_collision_passive_steps": 90,
     "scene_preview_steps": 240,
-    "stabilize_steps": 120,
+    "stabilize_passive_first_steps": 80,
+    "stabilize_steps": 160,
     "collision_patch": true,
+    "resync_dynamic_object_poses": true,
+    "micro_navigate_on_start": true,
+    "micro_navigate_offset_xy": [
+      0.1,
+      0.0
+    ],
+    "micro_navigate_max_steps": 500,
+    "micro_navigate_threshold": 0.12,
     "focus_view_on_robot": true,
     "set_masses": {
       "pick_cube": 0.05,
@@ -252,6 +263,10 @@
   "pick_place_defaults": {
     "default_execute_place": false,
     "navigate_to_place_pedestal_after_pick": true,
+    "navigate_after_pick_xy": [
+      0.58,
+      7.50704
+    ],
     "return_home_after_place": false,
     "primary_pick_object_key": "pick_cube",
     "primary_pick_color_keywords": [

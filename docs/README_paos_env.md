@@ -21,6 +21,7 @@ Install both local projects into the same `paos` environment:
 
 ```bash
 cd /home/zyserver/work/PhyAgentOS
+conda env create -f environment.yml
 pip install -e .
 
 ```
@@ -47,7 +48,7 @@ Then run commands in order:
 ```bash
 paos agent -m "open simulation"
 paos agent -m "go to desk"
-paos agent -m "pick up the red cube and move next to the rear pedestal"
+paos agent -m "pick up the red cube and return to the starting position"
 ```
 
 ## 6) Notes
