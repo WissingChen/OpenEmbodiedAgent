@@ -9,7 +9,7 @@ from typing import Any
 class InboundMessage:
     """Message received from a chat channel."""
 
-    channel: str  # telegram, discord, slack, whatsapp
+    channel: str  # telegram, discord, slack, whatsapp, system
     sender_id: str  # User identifier
     chat_id: str  # Chat/channel identifier
     content: str  # Message text
@@ -26,7 +26,11 @@ class InboundMessage:
 
 @dataclass
 class OutboundMessage:
-    """Message to send to a chat channel."""
+    """Message to send to a chat channel.
+
+    选择题支持：当 choices 非空时，前端应渲染为可交互的选择按钮。
+    用户选择后将选项 id 作为消息内容发回。
+    """
 
     channel: str
     chat_id: str
@@ -34,5 +38,38 @@ class OutboundMessage:
     reply_to: str | None = None
     media: list[str] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
+    # 选择题选项列表，每个选项为 {"id": "A", "label": "选项A描述"}
+    # 为空或 None 时表示普通消息
+    choices: list[dict[str, str]] = field(default_factory=list)
 
 
+@dataclass
+class PerceptionEvent:
+    """Fired by a perception service when a noteworthy environment change occurs.
+
+    The AgentLoop can subscribe to these events and inject them as system
+    messages into the active session so the LLM can react proactively.
+
+    Attributes
+    ----------
+    event_type:
+        Short machine-readable label, e.g. ``"target_detected"``,
+        ``"target_lost"``, ``"obstacle_detected"``, ``"nav_completed"``.
+    robot_id:
+        The robot that generated the event.
+    description:
+        Human-readable description forwarded to the LLM as a system message.
+    session_key:
+        Optional ``"channel:chat_id"`` string.  When set the event is routed
+        to that specific session; otherwise it is broadcast to all active
+        sessions.
+    data:
+        Arbitrary structured payload (e.g. bounding box, confidence score).
+    """
+
+    event_type: str
+    robot_id: str
+    description: str
+    session_key: str | None = None
+    data: dict[str, Any] = field(default_factory=dict)
+    timestamp: datetime = field(default_factory=datetime.now)

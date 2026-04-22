@@ -42,7 +42,9 @@ class MessageTool(Tool):
 
     @property
     def description(self) -> str:
-        return "Send a message to the user. Use this when you want to communicate something."
+        return ("Send a message to the user. Use this when you want to communicate something. "
+                "You can include a 'choices' parameter to present interactive multiple-choice "
+                "options to the user. Each choice has an 'id' and 'label'.")
 
     @property
     def parameters(self) -> dict[str, Any]:
@@ -65,6 +67,18 @@ class MessageTool(Tool):
                     "type": "array",
                     "items": {"type": "string"},
                     "description": "Optional: list of file paths to attach (images, audio, documents)"
+                },
+                "choices": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "id": {"type": "string"},
+                            "label": {"type": "string"}
+                        },
+                        "required": ["id", "label"]
+                    },
+                    "description": "向用户发起选择题。每个选项有 id 和 label，用户选择后将 id 作为回复发回。"
                 }
             },
             "required": ["content"]
@@ -77,6 +91,7 @@ class MessageTool(Tool):
         chat_id: str | None = None,
         message_id: str | None = None,
         media: list[str] | None = None,
+        choices: list[dict[str, str]] | None = None,
         **kwargs: Any
     ) -> str:
         channel = channel or self._default_channel
@@ -97,6 +112,7 @@ class MessageTool(Tool):
             metadata={
                 "message_id": message_id,
             },
+            choices=choices or [],
         )
 
         try:
