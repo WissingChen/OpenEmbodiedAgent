@@ -246,8 +246,13 @@ class AgentLoop:
         self,
         initial_messages: list[dict],
         on_progress: Callable[..., Awaitable[None]] | None = None,
+        session: Session | None = None,
     ) -> tuple[str | None, list[str], list[dict]]:
-        """Run the agent iteration loop."""
+        """Run the agent iteration loop.
+
+        If *session* is provided, each new message is persisted to the
+        JSONL file immediately as it is generated, not batched at the end.
+        """
         messages = initial_messages
         iteration = 0
         final_content = None
@@ -280,6 +285,9 @@ class AgentLoop:
                     reasoning_content=response.reasoning_content,
                     thinking_blocks=response.thinking_blocks,
                 )
+                # 实时持久化：智能体工具调用消息
+                if session:
+                    self._persist_message(session, messages[-1])
 
                 for tool_call in response.tool_calls:
                     tools_used.append(tool_call.name)
@@ -294,12 +302,15 @@ class AgentLoop:
                     _tool = self.tools.get(tool_call.name)
                     _is_muted = getattr(_tool, '_last_muted', False) if _tool else False
                     if _tool and hasattr(_tool, '_last_muted'):
-                        _tool._last_muted = False  # Reset for next call
+                        _tool._last_muted = False  # 为下次调用重置状态
                     messages = self.context.add_tool_result(
                         messages, tool_call.id, tool_call.name, result
                     )
                     if _is_muted:
                         messages[-1]["_muted"] = True
+                    # 实时持久化：工具执行结果
+                    if session:
+                        self._persist_message(session, messages[-1])
             else:
                 clean = self._strip_think(response.content)
                 # Don't persist error responses to session history — they can
@@ -312,6 +323,9 @@ class AgentLoop:
                     messages, clean, reasoning_content=response.reasoning_content,
                     thinking_blocks=response.thinking_blocks,
                 )
+                # 实时持久化：智能体最终回复
+                if session:
+                    self._persist_message(session, messages[-1])
                 final_content = clean
                 break
 
@@ -465,10 +479,14 @@ class AgentLoop:
                 if response is not None:
                     await self.bus.publish_outbound(response)
                 elif msg.channel == "cli":
-                    await self.bus.publish_outbound(OutboundMessage(
-                        channel=msg.channel, chat_id=msg.chat_id,
-                        content="", metadata=msg.metadata or {},
-                    ))
+                    # 仅当 MessageTool 未在本轮发送过消息时，才发送空响应
+                    # 否则空响应会在交互模式中导致异常渲染
+                    mt = self.tools.get("message")
+                    if not (mt and isinstance(mt, MessageTool) and mt._sent_in_turn):
+                        await self.bus.publish_outbound(OutboundMessage(
+                            channel=msg.channel, chat_id=msg.chat_id,
+                            content="", metadata=msg.metadata or {},
+                        ))
             except asyncio.CancelledError:
                 logger.info("Task cancelled for session {}", msg.session_key)
                 raise
@@ -515,9 +533,11 @@ class AgentLoop:
                 current_message=msg.content, channel=channel, chat_id=chat_id,
 session_key=key,
             )
-            final_content, _, all_msgs = await self._run_agent_loop(messages)
-            self._save_turn(session, all_msgs, 1 + len(history))
-            self.sessions.save(session)
+            # 实时持久化系统消息（用户/系统消息在循环开始前就写入）
+            self._persist_message(session, messages[-1])
+            final_content, _, all_msgs = await self._run_agent_loop(
+                messages, session=session,
+            )
             await self.memory_consolidator.maybe_consolidate_by_tokens(session)
             return OutboundMessage(channel=channel, chat_id=chat_id,
                                   content=final_content or "Background task completed.")
@@ -541,9 +561,11 @@ session_key=key,
                 channel=channel, chat_id=chat_id,
                 session_key=key,
             )
-            final_content, _, all_msgs = await self._run_agent_loop(messages)
-            self._save_turn(session, all_msgs,1+ len(history))
-            self.sessions.save(session)
+            # 实时持久化触发器唤醒消息
+            self._persist_message(session, messages[-1])
+            final_content, _, all_msgs = await self._run_agent_loop(
+                messages, session=session,
+            )
             await self.memory_consolidator.maybe_consolidate_by_tokens(session)
             if final_content:
                 return OutboundMessage(channel=channel, chat_id=chat_id,
@@ -583,6 +605,16 @@ session_key=key,
             self.sessions.invalidate(session.key)
             return OutboundMessage(channel=msg.channel, chat_id=msg.chat_id,
                                   content="New session started.")
+        if cmd == "/mute":
+            # 切换勿扰模式：用户的工具调用结果不激活智能体回复
+            muted = session.metadata.get("_user_muted", False)
+            session.metadata["_user_muted"] = not muted
+            self.sessions.save(session)
+            status = "🔇 勿扰模式已开启" if not muted else "🔔 勿扰模式已关闭"
+            return OutboundMessage(channel=msg.channel, chat_id=msg.chat_id, content=status)
+        if cmd.startswith("/tool "):
+            # 用户直接调用工具：/tool <name> {"param": "value"}
+            return await self._handle_user_tool_call(msg, session)
         if cmd.startswith("/triggers"):
             return self._handle_triggers_command(msg, key)
         if cmd == "/help":
@@ -591,6 +623,8 @@ session_key=key,
                 "/new — Start a new conversation",
                 "/stop — Stop the current task",
                 "/restart — Restart the bot",
+                "/tool <name> <params> — 直接调用工具",
+                "/mute — 切换勿扰模式",
                 "/triggers — Manage trigger environments",
                 "/help — Show available commands",
             ]
@@ -621,15 +655,16 @@ session_key=key,
                 channel=msg.channel, chat_id=msg.chat_id, content=content, metadata=meta,
             ))
 
+        # 实时持久化用户消息
+        self._persist_message(session, initial_messages[-1])
         final_content, _, all_msgs = await self._run_agent_loop(
             initial_messages, on_progress=on_progress or _bus_progress,
+            session=session,
         )
 
         if final_content is None:
             final_content = "I've completed processing but have no response to give."
 
-        self._save_turn(session, all_msgs, 1 + len(history))
-        self.sessions.save(session)
         await self.memory_consolidator.maybe_consolidate_by_tokens(session)
 
         if (mt := self.tools.get("message")) and isinstance(mt, MessageTool) and mt._sent_in_turn:
@@ -641,6 +676,46 @@ session_key=key,
             channel=msg.channel, chat_id=msg.chat_id, content=final_content,
             metadata=msg.metadata or {},
         )
+
+    def _persist_message(self, session: Session, msg: dict) -> None:
+        """将单条消息实时持久化到 session（内存 + JSONL 文件）。
+
+        在 _run_agent_loop 内部每产生一条新消息后立即调用，
+        确保即使中途崩溃也不会丢失已生成的消息。
+        """
+        from datetime import datetime
+        entry = dict(msg)
+        role, content = entry.get("role"), entry.get("content")
+        # 跳过空 assistant 消息
+        if role == "assistant" and not content and not entry.get("tool_calls"):
+            return
+        # 工具结果：截断 + muted 标记
+        if role == "tool":
+            if isinstance(content, str) and len(content) > self._TOOL_RESULT_MAX_CHARS:
+                entry["content"] = content[:self._TOOL_RESULT_MAX_CHARS] + "\n... (truncated)"
+            if entry.pop("_muted", False):
+                entry["muted"] = True
+        # 用户消息：剥离 Runtime Context
+        elif role == "user":
+            if isinstance(content, str) and content.startswith(ContextBuilder._RUNTIME_CONTEXT_TAG):
+                ps = content.split("\n\n", 1)
+                if len(ps) > 1 and ps[1].strip():
+                    entry["content"] = ps[1]
+                else:
+                    return
+            if isinstance(content, list):
+                filtered = [c for c in content
+                            if not (c.get("type") == "text" and isinstance(c.get("text"), str)
+                                    and c["text"].startswith(ContextBuilder._RUNTIME_CONTEXT_TAG))]
+                filtered = [{"type": "text", "text": "[image]"}
+                            if c.get("type") == "image_url" and c.get("image_url", {}).get("url", "").startswith("data:image/")
+                            else c for c in filtered]
+                if not filtered:
+                    return
+                entry["content"] = filtered
+        entry.setdefault("timestamp", datetime.now().isoformat())
+        session.messages.append(entry)
+        self.sessions.append_message(session, entry)
 
     def _save_turn(self, session: Session, messages: list[dict], skip: int) -> None:
         """Save new-turn messages into session, truncating large tool results."""
@@ -678,6 +753,9 @@ session_key=key,
                     entry["content"] = filtered
             entry.setdefault("timestamp", datetime.now().isoformat())
             session.messages.append(entry)
+            # 实时写入：每条消息立即追加到 JSONL 文件
+            # 以行为最小写入单元，使用文件锁保证并发安全
+            self.sessions.append_message(session, entry)
         session.updated_at = datetime.now()
 
     async def _flush_trigger_buffer(self, session: Session) -> None:
@@ -724,6 +802,62 @@ session_key=key,
         event = self._trigger_wakeup.setdefault(session_key, asyncio.Event())
         return self.trigger_buffer_manager.get_or_create(session_key, wakeup_event=event)
 
+    async def _handle_user_tool_call(
+        self, msg: InboundMessage, session: Session,
+    ) -> OutboundMessage | None:
+        """处理用户直接调用工具：/tool <name> <json_params>
+
+        用户的工具调用与智能体的工具调用使用相同的 role name 写入 session，
+        实现"用户可以做智能体能做的所有事"。
+        如果处于勿扰模式（/mute），结果标记为 muted 不激活智能体回复。
+        """
+        parts = msg.content.strip().split(None, 2)  # /tool name {params}
+        if len(parts) < 2:
+            return OutboundMessage(
+                channel=msg.channel, chat_id=msg.chat_id,
+                content="用法: /tool <name> [json_params]\n"
+                        f"可用工具: {', '.join(self.tools.tool_names)}",
+            )
+        tool_name = parts[1]
+        params_str = parts[2] if len(parts) > 2 else "{}"
+
+        # 解析参数
+        try:
+            params = json.loads(params_str)
+        except json.JSONDecodeError:
+            # 尝试简单的 key=value 格式
+            params = {"command": params_str} if tool_name == "exec" else {}
+
+        # 先持久化用户的工具调用命令
+        self._persist_message(session, {
+            "role": "user",
+            "content": msg.content,
+        })
+
+        # 执行工具
+        self._set_tool_context(msg.channel, msg.chat_id, msg.metadata.get("message_id"))
+        result = await self.tools.execute(tool_name, params)
+
+        # 检查勿扰模式
+        is_muted = session.metadata.get("_user_muted", False)
+
+        # 以 tool role 写入结果（与智能体调用一致）
+        tool_entry = {
+            "role": "tool",
+            "name": tool_name,
+            "content": result,
+        }
+        if is_muted:
+            tool_entry["muted"] = True
+        self._persist_message(session, tool_entry)
+
+        # 返回结果给用户
+        return OutboundMessage(
+            channel=msg.channel, chat_id=msg.chat_id,
+            content=result,
+            metadata={"_tool_result": True, "_muted": is_muted},
+        )
+
     def _handle_triggers_command(
         self, msg: InboundMessage, session_key: str,
     ) -> OutboundMessage:
@@ -739,10 +873,10 @@ session_key=key,
             /triggers envs         — list registered environments
         """
         from PhyAgentOS.triggers.trigger import TriggerState
-        # Parse command: /triggers [sub] [args...]
-        # e.g. "/triggers list detail active" or "/triggers set temp_alert muted"
+        # 解析命令: /triggers [子命令] [参数...]
+        # 例如 "/triggers list detail active" 或 "/triggers set temp_alert muted"
         parts = msg.content.strip().split()
-        sub = parts[1] if len(parts) > 1 else "list"  # Default subcommand
+        sub = parts[1] if len(parts) > 1 else "list"  # 默认子命令
 
         # /triggers envs — list registered environments
         if sub == "envs":
@@ -851,7 +985,7 @@ session_key=key,
                 channel=msg.channel, chat_id=msg.chat_id,
                 content="No trigger registry configured.",
             )
-        # Look up the active environment session for trigger listing
+        # 查找当前会话的活跃环境实例以列出触发器
         instance = self.trigger_registry.get_instance(session_key)
         if not instance:
             return OutboundMessage(
@@ -897,6 +1031,47 @@ session_key=key,
     ) -> str:
         """Process a message directly (for CLI or cron usage)."""
         await self._connect_mcp()
+
+        # 解析 session_key，确保工具上下文绑定到正确的会话
+        if session_key != "cli:direct":
+            if ":" in session_key:
+                channel, chat_id = session_key.split(":", 1)
+            else:
+                chat_id = session_key
+
         msg = InboundMessage(channel=channel, sender_id="user", chat_id=chat_id, content=content)
         response = await self._process_message(msg, session_key=session_key, on_progress=on_progress)
-        return response.content if response else ""
+
+        # 在 direct 模式下，CLI 没有运行总线消费者任务，
+        # 我们需要手动排空总线中由工具（如 MessageTool）发送的消息。
+        outbound_texts = []
+        choices_presented = None
+
+        while not self.bus.outbound.empty():
+            out_msg = self.bus.outbound.get_nowait()
+            if out_msg.content:
+                outbound_texts.append(out_msg.content)
+            if getattr(out_msg, "choices", None):
+                choices_presented = out_msg.choices
+
+        if response and response.content:
+            outbound_texts.append(response.content)
+
+        combined = "\n\n".join(outbound_texts)
+
+        # 如果智能体发起了选择题，在 direct 模式下我们阻塞等待用户输入
+        if choices_presented:
+            print(f"\n{combined}\n")
+            for c in choices_presented:
+                print(f"- {c.get('id')}: {c.get('label')}")
+            try:
+                import asyncio
+                user_choice = await asyncio.to_thread(input, "\n[Choice] 请输入选项: ")
+                # 递归处理用户的选择
+                return await self.process_direct(
+                    user_choice, session_key, channel, chat_id, on_progress
+                )
+            except (KeyboardInterrupt, EOFError):
+                pass
+
+        return combined

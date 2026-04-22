@@ -637,12 +637,23 @@ def agent(
                             else:
                                 console.print(f"  [dim]↳ {msg.content}[/dim]")
                         elif not turn_done.is_set():
-                            if msg.content:
-                                turn_response.append(msg.content)
+                            content = msg.content or ""
+                            if getattr(msg, "choices", None):
+                                content += "\n"
+                                for c in msg.choices:
+                                    content += f"\n- **{c.get('id')}**: {c.get('label')}"
+                            if content.strip():  # 跳过完全空的消息
+                                turn_response.append(content)
                             turn_done.set()
-                        elif msg.content:
-                            console.print()
-                            _print_agent_response(msg.content, render_markdown=markdown)
+                        else:
+                            content = msg.content or ""
+                            if getattr(msg, "choices", None):
+                                content += "\n"
+                                for c in msg.choices:
+                                    content += f"\n- **{c.get('id')}**: {c.get('label')}"
+                            if content.strip():  # 跳过空消息，避免异常渲染
+                                console.print()
+                                _print_agent_response(content, render_markdown=markdown)
                     except asyncio.TimeoutError:
                         continue
                     except asyncio.CancelledError:

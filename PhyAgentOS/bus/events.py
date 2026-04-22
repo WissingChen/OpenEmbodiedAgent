@@ -26,7 +26,11 @@ class InboundMessage:
 
 @dataclass
 class OutboundMessage:
-    """Message to send to a chat channel."""
+    """Message to send to a chat channel.
+
+    选择题支持：当 choices 非空时，前端应渲染为可交互的选择按钮。
+    用户选择后将选项 id 作为消息内容发回。
+    """
 
     channel: str
     chat_id: str
@@ -34,6 +38,9 @@ class OutboundMessage:
     reply_to: str | None = None
     media: list[str] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
+    # 选择题选项列表，每个选项为 {"id": "A", "label": "选项A描述"}
+    # 为空或 None 时表示普通消息
+    choices: list[dict[str, str]] = field(default_factory=list)
 
 
 @dataclass
