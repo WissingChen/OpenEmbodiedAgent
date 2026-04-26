@@ -90,6 +90,12 @@ Open another terminal:
 cd /path/to/PhyAgentOS
 conda activate paos
 paos agent -m "open simulation"
+```
+
+The next two manipulation commands use the **built-in rule-based** skills
+(scripted navigation + pick-and-place):
+
+```bash
 paos agent -m "go to desk"
 paos agent -m "pick up the red cube and return to the starting position"
 ```
